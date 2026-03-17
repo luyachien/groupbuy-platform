@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>GroupBuy Map</title>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+
+    <style>
+        #map {
+            height: 90vh;
+            width: 100%;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h2>附近團購地圖</h2>
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+    <script>
+
+        const map = L.map('map').setView([22.6236, 120.302], 15);
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19
+        }).addTo(map);
+
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(async (position) => {
+
+                const userLat = position.coords.latitude
+                const userLng = position.coords.longitude
+
+                map.setView([userLat, userLng], 15)
+
+                L.marker([userLat, userLng])
+                    .addTo(map)
+                    .bindPopup("你的位置")
+
+                const res = await fetch(`http://127.0.0.1:8000/nearby-groupbuys?lat=${userLat}&lng=${userLng}`)
+                const data = await res.json()
+
+                data.forEach(gb => {
+                    L.marker([gb.lat, gb.lng])
+                        .addTo(map)
+                        .bindPopup(`<b>${gb.title}</b><br>${gb.description}<br>$${gb.price}<br>距離:${gb.distance}km`)
+                })
+
+            })
+        }
+
+    </script>
+
+</body>
+
+</html>
