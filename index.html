@@ -2,59 +2,204 @@
 <html>
 
 <head>
-    <title>GroupBuy Map</title>
-
+    <title>GroupBuy Platform</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
-
     <style>
         #map {
-            height: 90vh;
+            height: 70vh;
             width: 100%;
+        }
+
+        #list {
+            display: none;
+        }
+
+        .groupbuy-item {
+            border: 1px solid #ccc;
+            padding: 10px;
+            margin: 5px 0;
+            cursor: pointer;
         }
     </style>
 </head>
 
 <body>
+    <h2>附近團購平台</h2>
+    <button id="mapBtn">地圖模式</button>
+    <button id="listBtn">列表模式</button>
 
-    <h2>附近團購地圖</h2>
+    <label for="sort">排序方式：</label>
+    <select id="sort">
+        <option value="distance">距離最近</option>
+        <option value="remaining">剩餘名額少</option>
+        <option value="deadline">快截止</option>
+    </select>
+
     <div id="map"></div>
+    <div id="list"></div>
 
     <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-
     <script>
+        // 地圖初始化
+        const map = L.map('map').setView([0, 0], 15);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
 
-        const map = L.map('map').setView([22.6236, 120.302], 15);
+        const mapDiv = document.getElementById("map");
+        const listDiv = document.getElementById("list");
+        const sortSelect = document.getElementById("sort");
 
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            maxZoom: 19
-        }).addTo(map);
+        document.getElementById("mapBtn").onclick = () => {
+            mapDiv.style.display = "block";
+            listDiv.style.display = "none";
+        };
+        document.getElementById("listBtn").onclick = () => {
+            mapDiv.style.display = "none";
+            listDiv.style.display = "block";
+        };
+
+        function getColor(status) {
+            if (status === "almost_full") return "orange";
+            if (status === "full") return "red";
+            return "green";
+        }
+
+        function daysLeft(deadline) {
+            const now = new Date();
+            const end = new Date(deadline);
+            const diffTime = end - now;
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            return diffDays >= 0 ? diffDays : 0;
+        }
+
+        async function joinGroup(id) {
+            try {
+                const res = await fetch(`http://127.0.0.1:8000/join-groupbuy/${id}`, { method: "POST" });
+                const data = await res.json();
+                alert(data.message);
+                location.reload();
+            } catch (err) {
+                console.error(err);
+                alert("加入失敗，請稍後再試");
+            }
+        }
+
+        function sortGroupbuys(data) {
+            const sortBy = sortSelect.value;
+            if (sortBy === "distance") {
+                data.sort((a, b) => a.distance - b.distance);
+            } else if (sortBy === "remaining") {
+                data.sort((a, b) => (a.people_limit - a.people_joined) - (b.people_limit - b.people_joined));
+            } else if (sortBy === "deadline") {
+                data.sort((a, b) => new Date(a.deadline) - new Date(b.deadline));
+            }
+            return data;
+        }
+
+        function displayList(data) {
+            listDiv.innerHTML = "";
+            data.forEach(gb => {
+                const item = document.createElement("div");
+                item.className = "groupbuy-item";
+
+                const statusColor = gb.status === "full" ? "red" : gb.status === "almost_full" ? "orange" : "green";
+
+                item.innerHTML = `<b>${gb.title}</b> (${gb.distance} km)<br>
+                                  ${gb.description}<br>
+                                  價格: $${gb.price}<br>
+                                  人數: ${gb.people_joined}/${gb.people_limit} 
+                                  <span style="color:${statusColor}">[${gb.status}]</span><br>
+                                  剩餘天數: ${daysLeft(gb.deadline)} 天<br>`;
+                const btn = document.createElement("button");
+                btn.innerText = "加入團購";
+                btn.onclick = (e) => { e.stopPropagation(); joinGroup(gb.id); };
+
+                item.appendChild(btn);
+
+                // 點擊整個列表項目定位地圖 marker 並切換地圖模式
+                item.onclick = () => {
+                    const marker = window.markersMap[gb.id];
+                    if (marker) {
+                        // 切換到地圖模式
+                        mapDiv.style.display = "block";
+                        listDiv.style.display = "none";
+
+                        // 放大地圖到 marker 並打開 popup
+                        map.setView(marker.getLatLng(), 18);
+                        marker.openPopup();
+                    }
+                };
+
+                listDiv.appendChild(item);
+            });
+        }
+
+        sortSelect.addEventListener("change", () => {
+            if (window.sortedData) displayList(sortGroupbuys(window.sortedData));
+        });
 
         if (navigator.geolocation) {
             navigator.geolocation.getCurrentPosition(async (position) => {
+                const userLat = position.coords.latitude;
+                const userLng = position.coords.longitude;
+                map.setView([userLat, userLng], 15);
 
-                const userLat = position.coords.latitude
-                const userLng = position.coords.longitude
+                L.marker([userLat, userLng]).addTo(map).bindPopup("你的位置").openPopup();
 
-                map.setView([userLat, userLng], 15)
+                // --- 測試團購只新增一次 ---
+                // 可以註解掉以下程式碼，如果你已經有真實資料
+                await fetch("http://127.0.0.1:8000/groupbuys", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        id: Math.floor(Math.random() * 1000),
+                        title: `附近測試團購`,
+                        description: "就在你旁邊！",
+                        price: Math.floor(Math.random() * 100) + 50,
+                        lat: userLat + (Math.random() - 0.5) / 1000,
+                        lng: userLng + (Math.random() - 0.5) / 1000,
+                        people_joined: Math.floor(Math.random() * 3),
+                        people_limit: 5,
+                        deadline: "2026-12-31"
+                    })
+                });
 
-                L.marker([userLat, userLng])
-                    .addTo(map)
-                    .bindPopup("你的位置")
+                const res = await fetch(`http://127.0.0.1:8000/nearby-groupbuys?lat=${userLat}&lng=${userLng}`);
+                const data = await res.json();
 
-                const res = await fetch(`http://127.0.0.1:8000/nearby-groupbuys?lat=${userLat}&lng=${userLng}`)
-                const data = await res.json()
-
+                // --- 地圖 marker ---
+                window.markersMap = {}; // id -> marker
                 data.forEach(gb => {
-                    L.marker([gb.lat, gb.lng])
-                        .addTo(map)
-                        .bindPopup(`<b>${gb.title}</b><br>${gb.description}<br>$${gb.price}<br>距離:${gb.distance}km`)
-                })
+                    const color = getColor(gb.status);
+                    const remaining = gb.people_limit - gb.people_joined;
+                    const radius = 5 + remaining * 3;
+                    const marker = L.circleMarker([gb.lat, gb.lng], { color: color, radius: radius }).addTo(map);
 
-            })
+                    const popupContent = document.createElement("div");
+                    popupContent.innerHTML = `<b>${gb.title}</b><br>${gb.description}<br>
+                                              價格: $${gb.price}<br>
+                                              距離: ${gb.distance} km<br>
+                                              人數: ${gb.people_joined}/${gb.people_limit}<br>
+                                              剩餘天數: ${daysLeft(gb.deadline)} 天`;
+                    const button = document.createElement("button");
+                    button.innerText = "加入團購";
+                    button.onclick = () => joinGroup(gb.id);
+                    popupContent.appendChild(document.createElement("br"));
+                    popupContent.appendChild(button);
+
+                    marker.bindPopup(popupContent);
+
+                    window.markersMap[gb.id] = marker; // 儲存 marker
+                });
+
+                // --- 列表模式 ---
+                window.sortedData = data;
+                displayList(sortGroupbuys(data));
+
+            }, () => { alert("無法取得位置"); });
+        } else {
+            alert("瀏覽器不支援 GPS");
         }
-
     </script>
-
 </body>
 
 </html>
